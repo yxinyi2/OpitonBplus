@@ -1,0 +1,503 @@
+---
+title: "Option B+"
+author: "Xinyi Yan"
+date: "4/21/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+load pacakges and data
+```{r setup, include=FALSE}
+library(lubridate)
+library(haven)
+library(dplyr)
+library(table1)
+library(sjmisc)
+library(magrittr)
+library(data.table)
+med=read_dta("/Users/xinyiyan/Desktop/Option B+/med_abs_labeled_appended_01Apr2020.dta")
+
+```
+
+
+diagnose before/during/after pregnancy
+if moms' date of confirm postive unknown in blue card, check if the date is available in green card, we define the date of postive comfirmation as first visit date for the following analysis.
+```{r}
+bcna<-subset(med,is.na(med_gpconfpos_bc_dateconfirmpos)|med$med_gpconfpos_bc_dateconfirmpos == as.Date('2020-01-01')) 
+bcnov1_1<-bcna
+bcnov1_1$med_gphivdiag_gc_dateconfirmpos[bcnov1_1$med_gphivdiag_gc_dateconfirmpos==as.Date('2020-01-01')]<-NA 
+
+g4<-subset(bcnov1_1,is.na(bcnov1_1$med_gphivdiag_gc_dateconfirmpos))
+g4$firv<-NA
+g4$firstvisit<-NA #first visit date missing in both green and blue card
+
+preg2<-interval(as.Date(bcnov1_1$med_gpinfdob_infdob)-280,as.Date(bcnov1_1$med_gpinfdob_infdob)) #create a pregnancy window
+
+#green card
+bcnov1_1$firstvisit<-ifelse(as.Date(bcnov1_1$med_gphivdiag_gc_dateconfirmpos) %within% preg2,1,0) #define 1st visit during pregnancy as 1, not during pregnacy as 0 
+
+gcvisit1<-subset(bcnov1_1,bcnov1_1$firstvisit==0) 
+gcvisit1$firv<-ifelse(as.Date(gcvisit1$med_gphivdiag_gc_dateconfirmpos)<as.Date(gcvisit1$med_gpinfdob_infdob-280),0,2) #define 1st visit before pregnancy as 0, after as 2
+
+gcvisit2<-subset(bcnov1_1,bcnov1_1$firstvisit==1)
+gcvisit2$firv<-gcvisit2$firstvisit
+
+g3<-rbind(gcvisit1,gcvisit2)
+
+
+#blue card
+bcvisit1<-subset(med,!is.na(med$med_gpconfpos_bc_dateconfirmpos)&med$med_gpconfpos_bc_dateconfirmpos!=as.Date('2020-01-01'))
+preg3<-interval(as.Date(bcvisit1$med_gpinfdob_infdob)-280,as.Date(bcvisit1$med_gpinfdob_infdob))
+bcvisit1$firstvisit<-ifelse(as.Date(bcvisit1$med_gpconfpos_bc_dateconfirmpos) %within% preg3,1,0)
+bcvisit2<-subset(bcvisit1,bcvisit1$firstvisit==0)
+bcvisit2$firv<-ifelse(as.Date(bcvisit2$med_gpconfpos_bc_dateconfirmpos)<as.Date(bcvisit2$med_gpinfdob_infdob)-280,0,2)
+bcvisit3<-subset(bcvisit1,bcvisit1$firstvisit==1)
+bcvisit3$firv<-bcvisit3$firstvisit
+g2<-rbind(bcvisit2,bcvisit3)
+
+
+
+
+#medfirv$firv: 0=before pregnancy/1=during/2=after
+#medfirv$firstvisit: 1=during
+medfirv<-rbind(g2,g3,g4)
+table(medfirv$firv)
+
+medfirv$firv<-factor(as_factor(medfirv$firv),levels = c('Known Postives','Newly Diagnosed(during pregnancy','Newly Diagnosed(after pregnancy'))
+
+
+```
+
+
+Table1: Baseline characteritics
+```{r,eval=TRUE}
+
+medfirv$diag[as_factor(medfirv$firv)==0]<-'Known Postive'
+medfirv$diag[as_factor(medfirv$firv)==1]<-'Newly diagnosed(during pregnancy)'
+medfirv$diag[as_factor(medfirv$firv)==2]<-'Newly diagnosed(after pregnancy)'
+
+
+#maternal age
+medfirv$age[medfirv$med_mage==99|medfirv$med_mage==999]<-NA
+
+medfirv$age<-cut(medfirv$med_mage,breaks=c(0,10,19,24,34,Inf),labels=c("< 10yr","10-19yr","20-24yr","25-43yr",">35yr"),
+  right = TRUE)
+label(medfirv$age)<-'Maternal Age'
+
+
+#Partner tested for HIV
+medfirv$med_bc_ptnrtest[medfirv$med_bc_ptnrtest==88]<-NA
+medfirv$pt<-factor(as.factor(medfirv$med_bc_ptnrtest),labels = c('no','yes'))
+label(medfirv$pt)<-'Partner tested for HIV'
+
+#disclosed
+medfirv$med_bc_ptnrdisc[medfirv$med_bc_ptnrdisc==88]<-NA
+medfirv$disclosed<-factor(as.factor(medfirv$med_bc_ptnrdisc),labels = c('no','yes'))
+label(medfirv$disclosed)<-'Disclosed'
+
+
+#time of ART, create ART initiation window
+medfirv$med_gpintart_bc_dateintart[medfirv$med_gpintart_bc_dateintart==as.Date('2020-01-01')]<-NA
+mn<-subset(medfirv,is.na(medfirv$med_gpintart_bc_dateintart))
+mn$med_gpintartgc_gc_dateintart[mn$med_gpintartgc_gc_dateintart==as.Date('2020-01-01')]<-NA
+mn$artdate<-mn$med_gpintartgc_gc_dateintart
+mm<-subset(medfirv,!is.na(medfirv$med_gpintart_bc_dateintart))
+mm$artdate<-mm$med_gpintart_bc_dateintart
+medart<-rbind(mm,mn)
+firsttri<-interval((as.Date(medart$med_gpinfdob_infdob))-280,as.Date(medart$med_gpinfdob_infdob)-190)
+sectri<-interval((as.Date(medart$med_gpinfdob_infdob))-190,as.Date(medart$med_gpinfdob_infdob)-100)
+thtri<-interval((as.Date(medart$med_gpinfdob_infdob))-100,as.Date(medart$med_gpinfdob_infdob)-10)
+delivery<-interval((as.Date(medart$med_gpinfdob_infdob))-10,as.Date(medart$med_gpinfdob_infdob)+10)
+post<-interval((as.Date(medart$med_gpinfdob_infdob))+10,as.Date(medart$med_gpinfdob_infdob)+Inf)
+before<-interval((as.Date(medart$med_gpinfdob_infdob))-Inf,as.Date(medart$med_gpinfdob_infdob)-280)
+medart$art[medart$artdate %within%firsttri]<-1
+medart$art[medart$artdate %within%sectri]<-2
+medart$art[medart$artdate %within%thtri]<-3
+medart$art[medart$artdate %within%delivery]<-4
+medart$art[medart$artdate >= as.Date(medart$med_gpinfdob_infdob)+10]<-5
+medart$art[medart$artdate <=as.Date(medart$med_gpinfdob_infdob)-280]<-6
+medfirv$art<-medart$art
+medfirv$art<-factor(medfirv$art, labels = c("1st trimmester","2nd trimester","3rd trimester","labour&delievery","postnatal","before pregnancy"))
+table(medfirv$art)
+
+
+#regimen
+medfirv$med_hei_momartreg[medfirv$med_hei_momartreg==88]<-NA
+medfirv$regimen<-factor(as.factor(medfirv$med_hei_momartreg),labels=c('None','sdNVP Only','Interrupted HAART','AZT+NVP+3TC','HAART','Other (specify)'))
+label(medfirv$regimen)<-'Regimen started'
+table(medfirv$med_hei_momartreg)
+                        
+#mode of delivery
+medfirv$med_hei_delivmethod[medfirv$med_hei_delivmethod==88]<-NA
+medfirv$mode<-factor(as.factor(medfirv$med_hei_delivmethod),labels=c('SVD','C-section'))
+label(medfirv$mode)<-'Mode of delivery'
+
+
+#place of delivery
+medfirv$med_hei_delivplace[medfirv$med_hei_delivplace==88]<-NA
+medfirv$place<-factor(as.factor(medfirv$med_hei_delivplace),labels=c('facility','home'))
+label(medfirv$place)<-'Place of delivery'
+
+#status of mother
+medfirv$med_hei_momalive[medfirv$med_hei_momalive==88]<-NA
+medfirv$status<-factor(as.factor(medfirv$med_hei_momalive),labels=c('Dead','Alive'))
+label(medfirv$status)<-'Status of mother' 
+
+table1(~age+pt+disclosed+art+regimen+mode+place+status|diag,data=medfirv)
+
+```
+
+
+Table 2:Contrast between retained in care and drop off group
+```{r}
+#exclude moms that do not have HEI card
+med1<-med
+med1$hei<-ifelse(med1$med_forms1==3|med1$med_forms2==3|med1$med_forms3==3|med1$med_forms4==3,1,0) 
+table(med1$hei) #6035 HEI
+sum(is.na(med1$hei)) ##55 NA
+infhei<-subset(med1,med1$hei==1) 
+
+
+#combine med_heifinaloutcome and med_infoutcome
+#use med_infoutcome to fill in the missing in med_heifinaloutcome
+infhei$med_heifinaloutcome[infhei$med_heifinaloutcome==88|infhei$med_heifinaloutcome==0|infhei$med_heifinaloutcome==9]<-NA
+inf11<-subset(infhei,is.na(infhei$med_heifinaloutcome))
+inf11$outcome<-inf11$med_infoutcome
+inf11$outcome[inf11$outcome==0|inf11$outcome==88]<-NA
+inf22<-subset(infhei,!is.na(infhei$med_heifinaloutcome))
+inf22$outcome<-inf22$med_heifinaloutcome
+t2dat<-rbind(inf11,inf22)
+t2datt<-subset(t2dat,!is.na(t2dat$outcome))
+
+#retained in care:discharged, transfer out, referred to ccc, dead
+#drop off: LTFU
+t2datt$care<-(ifelse(t2datt$outcome==1|t2datt$outcome==2|t2datt$outcome==3|t2datt$outcome==5,"Retained in care",'Drop off'))
+
+infdrop<-subset(t2dat,is.na(t2dat$outcome))
+infdrop$care<-'Drop off' #define missing in infantoutcome as 'drop off'
+
+infdrop$hei<-99
+
+
+
+infdat<-rbind(t2datt,infdrop)
+
+table(infdat$care)
+
+inff1<-subset(infdat,infdat$care=='Drop off')
+inff2<-subset(infdat,infdat$care=='Retained in care')
+
+#create the drop off window
+inff1<-mutate(inff1,id=rownames(inff1))
+df2<-data.frame(id=inff1$id,d_23=as.Date(inff1$hei_visdate23), d_22=as.Date(inff1$hei_visdate22),d_21=as.Date(inff1$hei_visdate21),d_20=as.Date(inff1$hei_visdate20),d_19=as.Date(inff1$hei_visdate19),d_18=as.Date(inff1$hei_visdate18),d_17=as.Date(inff1$hei_visdate17),d_16=as.Date(inff1$hei_visdate16),d_15=as.Date(inff1$hei_visdate15),d_14=as.Date(inff1$hei_visdate14),d_13=as.Date(inff1$hei_visdate13),d_12=as.Date(inff1$hei_visdate12),d_11=as.Date(inff1$hei_visdate11),d_10=as.Date(inff1$hei_visdate10),d_9=as.Date(inff1$hei_visdate9),d_8=as.Date(inff1$hei_visdate8),d_7=as.Date(inff1$hei_visdate7),d_6=as.Date(inff1$hei_visdate6),d_5=as.Date(inff1$hei_visdate5),d_4=as.Date(inff1$hei_visdate4),d_3=as.Date(inff1$hei_visdate3),d_2=as.Date(inff1$hei_visdate2),d_1=as.Date(inff1$hei_visdate1))
+
+
+df2$last<-do.call(pmax, c(df2[-1],na.rm=TRUE)) #find the first and last visit date
+df2$first<-do.call(pmin, c(df2[-1],na.rm=TRUE))
+
+inff1$lastvisit<-df2$last
+inff1$firstvisit<-df2$first
+
+iw1<-interval(as.Date(inff1$med_gpinfdob_infdob),as.Date(inff1$med_gpinfdob_infdob)+120) #0-3 months
+iw2<-interval(as.Date(inff1$med_gpinfdob_infdob)+120,as.Date(inff1$med_gpinfdob_infdob)+240) #4-7
+iw3<-interval(as.Date(inff1$med_gpinfdob_infdob)+240,as.Date(inff1$med_gpinfdob_infdob)+420) #8-13
+iw4<-interval(as.Date(inff1$med_gpinfdob_infdob)+420,as.Date(inff1$med_gpinfdob_infdob)+600) #14-19
+iw5<-interval(as.Date(inff1$med_gpinfdob_infdob)+600,as.Date(inff1$med_gpinfdob_infdob)+780) #20-25
+
+
+iw13<-interval(as.Date(inff1$med_gpinfdob_infdob),as.Date(inff1$med_gpinfdob_infdob)+210)
+inff1$fa[inff1$firstvisit %within%iw13]<-1
+
+
+inff1$window[inff1$lastvisit %within%iw1]<-1 #moms dropped off between 0-3 months are labled as 1
+inff1$window[inff1$lastvisit %within%iw2]<-2
+inff1$window[inff1$lastvisit %within%iw3]<-3
+inff1$window[inff1$lastvisit %within%iw4]<-4
+inff1$window[inff1$lastvisit %within%iw5]<-5
+table(inff1$window)
+
+inff2$window<-NA #those retained in care do not have drop off windown
+inff2$lastvisit<-NA
+inff2$firstvisit<-NA
+inff2$fa<-NA
+inff2<-mutate(inff2,id=rownames(inff2))
+
+infdath<-rbind(inff1,inff2)
+
+
+#make the table
+#infant sex
+infdath$sex1[infdath$med_hei_sex==2]<-'Female'
+infdath$sex1[infdath$med_hei_sex==1]<-'Male'
+infdath$sex1[infdath$med_hei_sex==88]<-NA
+label(infdath$sex1)<-'Sex'
+
+                   
+#infant age
+infdath$age<-cut(infdath$med_gpageenroll_hei_ageenrollwk,c(0,8,12,48,Inf),labels=c('< 8 weeks','8 weeks-6 months','6-12 months','> 12 months'))
+
+infdath$agem<-cut(infdath$med_gpageenroll_hei_ageenrollmo,c(0,2,6,12,Inf),labels=c('< 8 weeks','8 weeks-6 months','6-12 months','> 12 months'))
+infdath$age1[(infdath$med_gpageenroll_hei_ageenrollwk<8)]='< 8 weeks'
+
+infdath$age1[infdath$med_gpageenroll_hei_ageenrollmo>=6&infdath$med_gpageenroll_hei_ageenrollmo<=12]='6-12 months'
+
+infdath$age1[infdath$med_gpageenroll_hei_ageenrollmo>12]="> 12 months"
+
+label(infdath$age1)<-'Infant Age at enrollment'
+
+#entry point
+infdath$med_hei_entrypoint[infdath$med_hei_entrypoint==88]<-NA
+infdath$entry<-factor(infdath$med_hei_entrypoint,labels=c('Paediatric ward','OPD','Maternity','CCC','MCH/PMTCT','Other (specify)'))
+label(infdath$entry)<-'Clinical Entry Point'
+
+
+#CTX
+infdath$ctx<-ifelse(infdath$hei_ctx1=='0'|infdath$hei_ctx1=='00'|infdath$hei_ctx1=='999'|infdath$hei_ctx1=="N"|infdath$hei_ctx1=='O'|is.na(infdath$hei_ctx1),"No","Yes")
+label(infdath$ctx)<-'Received CTX Prophylaxis'
+
+#infant prophylaxis
+infdath$med_hei_arvs[infdath$med_hei_arvs==88]<-NA
+infdath$prophylaxis<-factor(infdath$med_hei_arvs,labels = c( 'None','Sd NVP only','Sd NVP+AZT+3TC','NVP for 6 weeks (Mother on ART or No BF)','NVP during breastfeeding','Other (specify)'))
+infdath$prophylaxis[infdath$med_hei_arvs==0]='None'
+label(infdath$prophylaxis)<-'Infant PMTCT Prophylaxis'
+
+
+
+#drop off window
+infdath$window<-as.factor(infdath$window)
+label(infdath$window)<-"drop off window"
+
+
+
+#feed: EBM/Emf/NBF/No breastfeed/WBF/Dbf/Erf/NVP/RF 
+table(infdath$hei_inffeed2)
+infdath$feed[infdath$hei_inffeed1==0|infdath$hei_inffeed1=="1.5mls"|infdath$hei_inffeed1==47||infdath$hei_inffeed1==54||infdath$hei_inffeed1==999||infdath$hei_inffeed1==1.5||infdath$hei_inffeed1==2||infdath$hei_inffeed1=="2MLS"||infdath$hei_inffeed1==51||infdath$hei_inffeed1==64||infdath$hei_inffeed1=="Yes"||infdath$hei_inffeed1=="Y"|infdath$hei_inffeed1=="Exclusive"|infdath$hei_inffeed1=="EBR"|infdath$hei_inffeed1=="Ebg"|infdath$hei_inffeed1=="Dbf"|infdath$hei_inffeed1=="WBF"]<-NA
+
+infdath$feed[infdath$hei_inffeed1=="E bf"|infdath$hei_inffeed1=="Ebf"|infdath$hei_inffeed1=="EBF exclusive breastfeeding"||infdath$hei_inffeed1=="Exclusive  breastfeeding"|infdath$hei_inffeed1=="Exclusive breasfeeding"|infdath$hei_inffeed1=="exclusive breast feeding"|infdath$hei_inffeed1=="Exclusive breastf eeding"|infdath$hei_inffeed1==" Exclusive breastfeeding"|infdath$hei_inffeed1=="Exclusive breastfeeding  (EBF)"|infdath$hei_inffeed1=="Exclusivebreastfeeding"|infdath$hei_inffeed1=="EB"|infdath$hei_inffeed1=="EBF"|infdath$hei_inffeed1=="Exclusive  Breastfeeding"|infdath$hei_inffeed1=="Exclusive breast feeding"|infdath$hei_inffeed1=="Exclusive breast breastfeeding"|infdath$hei_inffeed1=="Exclusive Breastfeeding"|infdath$hei_inffeed1=="Exclusive breastfeeding Breast"|infdath$hei_inffeed1=="Ebf"|infdath$hei_inffeed1=="=Ebf"]<-"Exclusive Breastfeeding"
+
+
+infdat$feed[infdat$hei_inffeed1=="ERF"|infdat$hei_inffeed1=="Exclusive replacement feed"|infdat$hei_inffeed1=="Exclusive Replacement feeding"|infdat$hei_inffeed1=="Erf"|infdat$hei_inffeed1=="Exclusive replacement feeding"|infdat$hei_inffeed1=="Exclusive Replacement Feeding"|infdat$hei_inffeed1=="RF"]<-"Exlusive Replacement Feeding"
+
+infdath$feed[infdath$hei_inffeed1=="Mbf"|infdath$hei_inffeed1=="MF"|infdath$hei_inffeed1=="Mixed feeding"|infdath$hei_inffeed1=="Breastfeeding  and Complementary feeding"|infdath$hei_inffeed1=="Mb"|infdath$hei_inffeed1=="Mf"|infdath$hei_inffeed1=="Mixed feed"|infdath$hei_inffeed1=="Bebf"|infdath$hei_inffeed1=='BF'|infdath$hei_inffeed1=="Breastfeed"|infdath$hei_inffeed1=="Breastfeeding  (BF )"|infdath$hei_inffeed1=="BBF"|infdath$hei_inffeed1=="Bf"|infdath$hei_inffeed1=="Breast feeding"|infdath$hei_inffeed1=="Breastfeeding"|infdath$hei_inffeed1=="Cf"|infdath$hei_inffeed1=="Complementary feeding"|infdath$hei_inffeed1=="CF"]<-"Mix Feeding"
+
+
+infdath$feed[infdath$hei_inffeed1=="Not breast feeding"|infdath$hei_inffeed1=="NVP"|infdath$hei_inffeed1=="No breastfeeding"|infdath$hei_inffeed1=="No"|infdath$hei_inffeed1=="Nbf"|infdath$hei_inffeed1=="Not breastfeeding"|infdath$hei_inffeed1=="Not BF"|infdath$hei_inffeed1=="No breastfeed"|infdath$hei_inffeed1=="NBF"]<-"No Breastfeeding"
+
+
+#final outcome
+infdath$med_heifinaloutcome[infdath$med_heifinaloutcome==88]<-NA
+infdath$finaloutcome<-factor(infdath$med_heifinaloutcome,labels = c('Discharged at 18 months',"Referred to CCC","Transferred out","Lost to Follow up","Dead"))
+
+table(infdath$finaloutcome)
+
+
+
+#infant hiv status
+#if the 1st pcr test or repeat PCR (1) test or repeat PCR (2) test or Final Antibody test or other test is postive, than the infant is HIV postive; if only the infant only has antibody test, we need to take a look at the infant age, if infant is younger than 14 months, we need infant to have both 1st Antibody test and confirmatory PCR test postive. If the infant is older than 14 months, we only need 1st Antibody test to be postive
+infdath$hivstatus[infdath$med_gp1pcr_hei_res1pcr==1|infdath$med_gp1reppcr_hei_res1reppcr==1|infdath$med_gp2reppcr_hei_res2reppcr==1|infdath$med_gpfinab_hei_resfinab==1|infdath$med_gpoth_hei_resoth==1]<-"postive"
+
+infdath$noother<-ifelse(is.na(infdath$med_gp1pcr_hei_res1pcr)&is.na(infdath$med_gp1reppcr_hei_res1reppcr)&is.na(infdath$med_gp2reppcr_hei_res2reppcr)&is.na(infdath$med_gpfinab_hei_resfinab)&is.na(infdath$med_gpoth_hei_resoth),0,1) 
+
+infdath$ab<-ifelse(infdath$noother==0&!is.na(infdath$med_gp1ab_hei_res1ab),1,0)
+
+infdath$young<-ifelse(infdath$ab==1&as.Date(infdath$med_gp1ab_hei_date1ab)-as.Date(infdath$med_gpinfdob_infdob)<420,1,0)
+
+infdath$hivstatus[infdath$young==1&infdath$med_gpconfpcr_hei_resconfpcr==1&infdath$med_gp1ab_hei_res1ab==1]<-"postive"
+infdath$hivstatus[infdath$young==0&infdath$med_gp1ab_hei_res1ab==1]<-"postive"
+
+
+infdath$hivstatus[infdath$med_gp1pcr_hei_res1pcr==0|infdath$med_gp1reppcr_hei_res1reppcr==0|infdath$med_gp2reppcr_hei_res2reppcr==0|infdath$med_gpfinab_hei_resfinab==0|infdath$med_gpoth_hei_resoth==0|infdath$med_gp1ab_hei_res1ab==0|infdath$med_gpconfpcr_hei_resconfpcr==0]<-"negative"
+
+
+sum(is.na(infdat$hivstatus))
+table(infdath$hivstatus)
+
+
+
+infdatcheck<-subset(infdath,infdath$care=="Drop off" & infdath$hivstatus=="postive")
+table(infdatcheck$finaloutcome)
+
+infdathh<-infdath
+
+infdathh$care[infdathh$care=="Drop off" & infdathh$hivstatus=="postive"]<-"Retained in care" # if infant's HIV status is postivem than he/she is moved to 'retained in care'
+table(infdathh$care)
+table1(~window+sex1+age1+entry+ctx+prophylaxis+feed+hivstatus+finaloutcome|care,data=infdathh)
+
+
+#chi-square test
+chisq.test(infdathh$care,infdathh$finaloutcome)
+chisq.test(infdathh$care,infdathh$hivstatus)
+chisq.test(infdathh$care,infdathh$feed)
+chisq.test(infdathh$care,infdathh$prophylaxis)
+chisq.test(infdathh$care,infdathh$ctx)
+chisq.test(infdathh$care,infdathh$entry)
+chisq.test(infdathh$care,infdathh$age1)
+chisq.test(infdathh$care,infdathh$sex1)
+
+```
+
+
+
+
+
+
+Table 3 : Contrast between early and late drop off
+```{r}
+infdathh$window[infdathh$care=="Retained in care"]<-NA
+infdathhh<-subset(infdathh,!is.na(infdathh$window))
+infdathhh$drop[infdathhh$window==1|infdathhh$window==2|infdathhh$window==3]<-0 #early drop off
+infdathhh$drop[infdathhh$window==4|infdathhh$window==5]<-1 #late drop off
+
+table1(~sex1+age1+entry+ctx+prophylaxis+feed+hivstatus+finaloutcome|drop,data=infdathhh)
+
+
+chisq.test(infdathhh$drop,infdathhh$sex1)$p.value
+chisq.test(infdathhh$drop,infdathhh$age1)$p.value
+chisq.test(infdathhh$drop,infdathhh$entry)$p.value
+chisq.test(infdathhh$drop,infdathhh$ctx)$p.value
+chisq.test(infdathhh$drop,infdathhh$prophylaxis)$p.value
+chisq.test(infdathhh$drop,infdathhh$feed)$p.value
+
+
+
+
+```
+
+
+Poisson Regression
+
+poi.1<-gee(aa ~ sex1+age1+entry+ctx+prophylaxis+feed, family = poisson,id = seq(1,nrow(infdathh)), data=infdathh)
+summary(poi.1) #risk ratio
+
+infdathh$aa<-ifelse(infdathh$care=="Drop off",1,0)
+poi.2<-gee(drop~sex1+age1+entry+ctx+prophylaxis+feed+hivstatus,family = poisson,id = seq(1,nrow(infdathhh)), data=infdathhh)
+summary(poi.2)
+
+
+Poisson regression+baseline characteristics
+```{r}
+#Risk ratio of dropping off vs retained in care
+infdathh$aa<-ifelse(infdathh$care=="Drop off",1,0)
+poi1<-regress('rate',aa ~ as.factor(sex1)+as.factor(age1)+as.factor(entry)+as.factor(ctx)+as.factor(prophylaxis)+as.factor(feed)+as.factor(hivstatus)+as.factor(feed)*as.factor(age1)+as.factor(momage)+as.factor(art)+as.factor(regimen)+as.factor(place),data=infdathh) #adjust for possible interactions
+
+print(round(poi1$transformed,4))
+
+
+
+
+# risk ratio of late drop off vs early drop off
+infdathhh$entry[infdathhh$entry=='Missing']<-NA
+infdathhh$prophylaxis[infdathhh$prophylaxis=='Missing']<-NA
+
+poi2<-regress('rate',drop ~ as.factor(sex1)+as.factor(age1)+as.factor(entry)+as.factor(ctx)+as.factor(prophylaxis)+as.factor(feed)+as.factor(feed)*as.factor(age1)+as.factor(momage)+as.factor(regimen)+as.factor(place),data=infdathhh)
+print(round(poi2$transformed,4))
+
+
+
+
+
+```
+
+
+exclude babies older than 6 month
+```{r}
+#create an age at 1st visit feature
+df3<-data.frame(id=infdath$id,d_23=as.Date(infdath$hei_visdate23), d_22=as.Date(inff1$hei_visdate22),d_21=as.Date(inff1$hei_visdate21),d_20=as.Date(inff1$hei_visdate20),d_19=as.Date(inff1$hei_visdate19),d_18=as.Date(inff1$hei_visdate18),d_17=as.Date(inff1$hei_visdate17),d_16=as.Date(inff1$hei_visdate16),d_15=as.Date(inff1$hei_visdate15),d_14=as.Date(inff1$hei_visdate14),d_13=as.Date(inff1$hei_visdate13),d_12=as.Date(inff1$hei_visdate12),d_11=as.Date(inff1$hei_visdate11),d_10=as.Date(inff1$hei_visdate10),d_9=as.Date(inff1$hei_visdate9),d_8=as.Date(inff1$hei_visdate8),d_7=as.Date(inff1$hei_visdate7),d_6=as.Date(inff1$hei_visdate6),d_5=as.Date(inff1$hei_visdate5),d_4=as.Date(inff1$hei_visdate4),d_3=as.Date(inff1$hei_visdate3),d_2=as.Date(inff1$hei_visdate2),d_1=as.Date(inff1$hei_visdate1))
+
+infdath$fa[infdath$hei_visdate1%within%iw13]<-1
+
+df2$last<-do.call(pmax, c(df2[-1],na.rm=TRUE))
+df2$first<-do.call(pmin, c(df2[-1],na.rm=TRUE))
+
+inff1$lastvisit<-df2$last
+inff1$firstvisit<-df2$first
+
+
+iw13<-interval(as.Date(infdath$med_gpinfdob_infdob),as.Date(infdath$med_gpinfdob_infdob)+210) 
+inff1$fa[inff1$firstvisit %within%iw13]<-1  #younger than 6 months when 1st visit
+
+table(infdath$fa)
+
+infdathhhh<-subset(infdath,infdath$fa==1)
+infdathhhh$window[infdathhhh$care=="Retained in care"]<-NA
+infdathhhhh<-subset(infdathhhh,!is.na(infdathhhh$window))
+infdathhhhh$drop[infdathhhhh$window==1|infdathhhhh$window==2|infdathhhhh$window==3]<-0
+infdathhhhh$drop[infdathhhhh$window==4|infdathhhhh$window==5]<-1
+
+table1(~sex1+age1+entry+ctx+prophylaxis+feed+hivstatus+finaloutcome|drop,data=infdathhhhh)
+
+infdathhhhh$entry[infdathhhhh$entry=='Missing']<-NA
+infdathhhhh$prophylaxis[infdathhhhh$prophylaxis=='Missing']<-NA
+poi3<-regress('rate',drop ~ as.factor(sex1)+as.factor(age1)+as.factor(entry)+as.factor(ctx)+as.factor(prophylaxis)+as.factor(feed)+as.factor(feed)*as.factor(age1)+as.factor(momage)+as.factor(regimen)+as.factor(place),data=infdathhhhh)
+print(round(poi3$transformed,4)) #same poission model as in model3
+```
+
+
+add baseline characteristics to tables
+```{r}
+#maternal age
+infdath$momage[infdath$med_mage==99|infdath$med_mage==999]<-NA
+infdath$momage<-cut(infdath$med_mage,breaks=c(0,24,34,Inf),labels=c("<=24yr","25-34yr",">35yr"),
+  right = TRUE)
+table(infdath$momage)
+label(infdath$momage)<-'Maternal Age'
+
+#time of ART
+infdath$med_gpintart_bc_dateintart[infdath$med_gpintart_bc_dateintart==as.Date('2020-01-01')]<-NA
+mn<-infdath[is.na(infdath$med_gpintart_bc_dateintart),]
+mn$med_gpintartgc_gc_dateintart[mn$med_gpintartgc_gc_dateintart==as.Date('2020-01-01')]<-NA
+mn$artdate<-mn$med_gpintartgc_gc_dateintart
+mm<-infdath[!is.na(infdath$med_gpintart_bc_dateintart),]
+mm$artdate<-mm$med_gpintart_bc_dateintart
+medart<-rbind(mm,mn)
+firsttri<-interval((as.Date(medart$med_gpinfdob_infdob))-280,as.Date(medart$med_gpinfdob_infdob)-190)
+sectri<-interval((as.Date(medart$med_gpinfdob_infdob))-190,as.Date(medart$med_gpinfdob_infdob)-100)
+thtri<-interval((as.Date(medart$med_gpinfdob_infdob))-100,as.Date(medart$med_gpinfdob_infdob)-10)
+delivery<-interval((as.Date(medart$med_gpinfdob_infdob))-10,as.Date(medart$med_gpinfdob_infdob)+10)
+post<-interval((as.Date(medart$med_gpinfdob_infdob))+10,as.Date(medart$med_gpinfdob_infdob)+Inf)
+before<-interval((as.Date(medart$med_gpinfdob_infdob))-Inf,as.Date(medart$med_gpinfdob_infdob)-280)
+medart$artinf[medart$artdate %within% firsttri]<-1
+medart$artinf[medart$artdate %within%sectri]<-2
+medart$artinf[medart$artdate %within%thtri]<-3
+medart$artinf[medart$artdate %within%delivery]<-4
+medart$artinf[medart$artdate >= as.Date(medart$med_gpinfdob_infdob)+10]<-5
+medart$artinf[medart$artdate <=as.Date(medart$med_gpinfdob_infdob)-280]<-6
+infdath$art<-medart$artinf
+infdath$art<-factor(infdath$art, labels = c("1st trimmester","2nd trimester","3rd trimester","labour&delievery","postnatal","before pregnancy"))
+
+
+#regimen
+infdath$med_hei_momartreg[infdath$med_hei_momartreg==88]<-NA
+infdath$regimen<-factor(as.factor(infdath$med_hei_momartreg),labels=c('None','sdNVP Only','Interrupted HAART','AZT+NVP+3TC','HAART','Other (specify)'))
+label(infdath$regimen)<-'Regimen started'
+
+#place of delivery
+infdath$med_hei_delivplace[infdath$med_hei_delivplace==88]<-NA
+infdath$place<-factor(as.factor(infdath$med_hei_delivplace),labels=c('facility','home'))
+label(infdath$place)<-'Place of delivery'
+
+
+infdathh<-infdath
+
+infdathh$care[infdathh$care=="Drop off" & infdathh$hivstatus=="postive"]<-"Retained in care" # if infant's HIV status is postivem than he/she is moved to 'retained in care'
+
+table1(~window+sex1+age1+entry+ctx+prophylaxis+feed+hivstatus+finaloutcome+momage+art+regimen+place|care,data=infdathh)
+
+
+#retained in care vs drop off
+table1(~window+sex1+age1+entry+ctx+prophylaxis+feed+hivstatus+finaloutcome+momage+art+regimen+place|care,data=infdathh)
+
+
+#early vs late
+
+infdathh$window[infdathh$care=="Retained in care"]<-NA
+infdathhh<-subset(infdathh,!is.na(infdathh$window))
+infdathhh$drop[infdathhh$window==1|infdathhh$window==2|infdathhh$window==3]<-'early' #early drop off
+infdathhh$drop[infdathhh$window==4|infdathhh$window==5]<-'late' #late drop off
+table1(~sex1+age1+entry+ctx+prophylaxis+feed+hivstatus+finaloutcome+momage+art+regimen+place|drop,data=infdathhh)
+
+
+
+```
+
